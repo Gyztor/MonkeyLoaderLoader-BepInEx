@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.4] - 05-03-2025
+
+- Add ALC Resolving fallback to fix FileLoadException for BepInEx-loaded assemblies (fixes #3)
+
 ## [1.0.3] - 26-12-2025
 
 - Fix to load the right MonkeyLoaderWrapper DLL on Linux
