@@ -96,6 +96,13 @@ class MonkeyLoaderLoader
 			Plugin.Log!.LogDebug($"Preloading: {name}");
 			Assembly.LoadFrom(file);
 		}
+
+		foreach (var alc in AssemblyLoadContext.All)
+		{
+			alc.Resolving += (context, assemblyName) =>
+				AppDomain.CurrentDomain.GetAssemblies()
+					.FirstOrDefault(a => a.GetName().Name == assemblyName.Name);
+		}
 	}
 
 	public static void Load(Harmony harmony)
