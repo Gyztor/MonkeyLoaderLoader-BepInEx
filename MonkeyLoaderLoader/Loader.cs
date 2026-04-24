@@ -87,6 +87,25 @@ class MonkeyLoaderLoader
 	
 	private static void PreloadAssemblies()
 	{
+		// Add runtimes folder to PATH so native libraries can be found
+		var rid = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win-x64" :
+				  RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux-x64" :
+				  RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx-x64" : null;
+		
+		if (rid != null)
+		{
+			var runtimesNativePath = Path.Combine(AppContext.BaseDirectory, "runtimes", rid, "native");
+			if (Directory.Exists(runtimesNativePath))
+			{
+				var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+				if (!pathEnv.Contains(runtimesNativePath))
+				{
+					Environment.SetEnvironmentVariable("PATH", runtimesNativePath + Path.PathSeparator + pathEnv);
+					Plugin.Log?.LogDebug($"Added to PATH: {runtimesNativePath}");
+				}
+			}
+		}
+		
 		_monkeyLoaderWrapperAsm = Assembly.LoadFrom(_monkeyLoaderWrapperPath.FullName);
 		var loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
 		foreach (var file in Directory.GetFiles("MonkeyLoader").Where(f => f.EndsWith(".dll")))
@@ -159,11 +178,53 @@ class MonkeyLoaderLoader
 		}
 
 		var resolveNativeLibraryDelegate = (DllImportResolver)Delegate.CreateDelegate(typeof(DllImportResolver), _resolveNativeLibraryMethod);
+		
+		// Wrap the resolver to also search in runtimes folder
+		DllImportResolver runtimesAwareResolver = (name, assembly, path) =>
+		{
+			// Try the original resolver first
+			var result = resolveNativeLibraryDelegate(name, assembly, path);
+			if (result != IntPtr.Zero) return result;
+			
+			// Fallback: search in runtimes folder
+			var rid = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win-x64" :
+					  RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux-x64" :
+					  RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx-x64" : null;
+			
+			if (rid != null)
+			{
+				var runtimesPath = Path.Combine("runtimes", rid, "native", $"{name}.dll");
+				if (File.Exists(runtimesPath))
+				{
+					try 
+					{ 
+						Plugin.Log?.LogDebug($"Loading native library from runtimes: {runtimesPath}");
+						return NativeLibrary.Load(runtimesPath); 
+					}
+					catch (Exception e) { Plugin.Log?.LogDebug($"Failed to load {runtimesPath}: {e.Message}"); }
+				}
+				
+				// Try with .so extension for cross-platform compatibility
+				runtimesPath = Path.Combine("runtimes", rid, "native", $"{name}.so");
+				if (File.Exists(runtimesPath))
+				{
+					try 
+					{ 
+						Plugin.Log?.LogDebug($"Loading native library from runtimes: {runtimesPath}");
+						return NativeLibrary.Load(runtimesPath); 
+					}
+					catch (Exception e) { Plugin.Log?.LogDebug($"Failed to load {runtimesPath}: {e.Message}"); }
+				}
+			}
+			
+			return result;
+		};
+		
 		foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
 		{
 			if (assembly.GetName().Name == "SoundFlow") continue;
-			if (assembly.GetName().Name == "SharpFont") continue;
-			NativeLibrary.SetDllImportResolver(assembly, resolveNativeLibraryDelegate);
+			// NOTE: SharpFont needs the resolver to find freetype6, so don't skip it
+			NativeLibrary.SetDllImportResolver(assembly, runtimesAwareResolver);
 		}
 
 		Plugin.Log!.LogInfo("Done!");
